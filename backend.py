@@ -1,61 +1,20 @@
-# backend/main.py
-
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import shutil
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
+import shutil
 import numpy as np
-# import tensorflow as tf
-# from tensorflow import keras
-# from tensorflow.keras.preprocessing.sequence import pad_sequences
-from scipy.signal import medfilt
 import cv2
+from scipy.signal import medfilt
 import ast
-import uvicorn
 
+app = Flask(__name__)
+CORS(app)
 
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-
-# class TransformerBlock(tf.keras.layers.Layer):
-#     def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1, **kwargs):
-#         super(TransformerBlock, self).__init__(**kwargs)
-#         self.embed_dim = embed_dim
-#         self.num_heads = num_heads
-#         self.ff_dim = ff_dim
-#         self.rate = rate
-#         self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
-#         self.ffn = tf.keras.Sequential([
-#             tf.keras.layers.Dense(ff_dim, activation="relu"),
-#             tf.keras.layers.Dense(embed_dim),
-#         ])
-#         self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-#         self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-#         self.dropout1 = tf.keras.layers.Dropout(rate)
-#         self.dropout2 = tf.keras.layers.Dropout(rate)
-
-#     def call(self, inputs, training=False, **kwargs):
-#         attn_output = self.att(inputs, inputs)
-#         attn_output = self.dropout1(attn_output, training=training)
-#         out1 = self.layernorm1(inputs + attn_output)
-#         ffn_output = self.ffn(out1)
-#         ffn_output = self.dropout2(ffn_output, training=training)
-#         return self.layernorm2(out1 + ffn_output)
-
-#     def get_config(self):
-#         config = super(TransformerBlock, self).get_config()
-#         config.update({
-#             "embed_dim": self.embed_dim,
-#             "num_heads": self.num_heads,
-#             "ff_dim": self.ff_dim,
-#             "rate": self.rate,
-#         })
-#         return config
 
 def motion_analysis(video_path, std_width=720, std_height=480):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"Error: Could not open video {video_path}")
         return None
     nFrames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1
     fps = int(cap.get(cv2.CAP_PROP_FPS))
@@ -104,29 +63,6 @@ def match_vectors(lastPr, Pr, delta_max):
                 last_diff = curr_diff
     return shift
 
-def psiv(input_video, std_width=720, std_height=480):
-    result = motion_analysis(input_video, std_width, std_height)
-    if result is None:
-        return None
-    pan, tilt, acc_pan, acc_tilt, nFrames, fps = result
-    acc_pan_f = medfilt(acc_pan, 15)
-    acc_tilt_f = medfilt(acc_tilt, 15)
-    diff_pan = np.abs(acc_pan_f - acc_pan)
-    diff_tilt = np.abs(acc_tilt_f - acc_tilt)
-    MPF = (1 / nFrames) * np.sum(diff_pan)
-    MTF = (1 / nFrames) * np.sum(diff_tilt)
-    return MPF, MTF, diff_pan, diff_tilt, nFrames, fps
-
-# def process_video(video_path, max_seq_length, std_width=720, std_height=480):
-#     result = psiv(video_path, std_width, std_height)
-#     if result is None:
-#         raise ValueError("Error processing video: " + video_path)
-#     _, _, pan, tilt, nFrames, fps = result
-#     pan_padded = pad_sequences([pan], maxlen=max_seq_length, padding='post', dtype='float32')
-#     tilt_padded = pad_sequences([tilt], maxlen=max_seq_length, padding='post', dtype='float32')
-#     sequence_input = np.stack((pan_padded, tilt_padded), axis=-1)
-#     return sequence_input
-
 def fix_image_size(img, size=(224, 224)):
     return cv2.resize(img, size)
 
@@ -167,55 +103,30 @@ def process_frame(frame):
     tilt_score = calculate_tilt_score(image2)
     return tilt_score, blurr_score, contrast_score, brightness_score, burnt_score
 
-app = FastAPI()
+@app.route("/api/predict", methods=["POST"])
+def predict():
+    if "video" not in request.files or "features" not in request.form:
+        return jsonify({"error": "Missing file or features"}), 400
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    video = request.files["video"]
+    features = request.form["features"]
 
-# with keras.utils.custom_object_scope({'TransformerBlock': TransformerBlock}):
-#     loaded_model = keras.models.load_model("model1.keras")
+    try:
+        features = ast.literal_eval(features)
+        if not isinstance(features, list):
+            features = [features]
+    except:
+        features = [features]
 
-# intermediate_model = keras.Model(
-#     inputs=loaded_model.input,
-#     outputs=loaded_model.output
-# )
-
-max_seq_length = 2263
-
-@app.post("/api/predict")
-async def predict(video: UploadFile = File(...), features: str = Form(...)):
-    if isinstance(features, str):
-        try:
-            parsed_features = ast.literal_eval(features)
-            if isinstance(parsed_features, list):
-                features = parsed_features
-            else:
-                features = [features]  # Just a single string
-        except Exception:
-            features = [features]  # If parsing fails, treat as single string
-
-    # Now 'features' is definitely a list
     requested_features = [f.strip().lower() for f in features]
-    print(requested_features)
+
     temp_video_path = "temp_uploaded_video.mp4"
-    with open(temp_video_path, "wb") as buffer:
-        shutil.copyfileobj(video.file, buffer)
+    video.save(temp_video_path)
 
     results = {}
 
     try:
-        # if "shakinessscore" in requested_features:
-        #     input_data = process_video(temp_video_path, max_seq_length)
-        #     prediction = intermediate_model.predict(input_data)
-        #     results["shakinessScore"] = float(prediction[0][0])
-
-        if any(f in requested_features for f in ["tiltscore", "blurrinessscore", "contrast", "brightness", "burnt_pixel"]):
-            
+        if any(f in requested_features for f in ["tiltscore", "blurrinessscore", "contrast", "brightness", "burnt_pixel", "burnt_pixels"]):
             cap = cv2.VideoCapture(temp_video_path)
             tilt_scores, blurr_scores, contrast_scores, brightness_scores, burnt_scores = [], [], [], [], []
             while True:
@@ -238,14 +149,16 @@ async def predict(video: UploadFile = File(...), features: str = Form(...)):
                 results["contrastScore"] = float(np.mean(contrast_scores))
             if "brightness" in requested_features:
                 results["brightnessScore"] = float(np.mean(brightness_scores))
-            if "burnt_pixels" in requested_features:
+            if "burnt_pixels" in requested_features or "burnt_pixel" in requested_features:
                 results["burntPixelScore"] = float(np.mean(burnt_scores))
 
     except Exception as e:
-        return JSONResponse(content={"error": f"Processing failed: {str(e)}"}, status_code=500)
+        return jsonify({"error": f"Processing failed: {str(e)}"}), 500
     finally:
-        os.remove(temp_video_path)
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
 
-    return JSONResponse(content=results)
+    return jsonify(results)
 
-
+if __name__ == "__main__":
+    app.run()
