@@ -159,6 +159,11 @@ def psiv(input_video):
     return shakiness_score
 
 
+def normalize(value, min_val, max_val):
+    return max(0, min(1, (value - min_val) / (max_val - min_val)))
+
+
+
 @app.route("/api/predict", methods=["POST"])
 def predict():
     if "video" not in request.files or "features" not in request.form:
@@ -203,9 +208,11 @@ def predict():
             if "tiltscore" in requested_features:
                 results["tiltScore"] = float(np.mean(tilt_scores))
             if "blurrinessscore" in requested_features:
-                results["blurrinessScore"] = float(np.mean(blurr_scores))
+                raw_blurriness = float(np.mean(blurr_scores))
+                results["blurrinessScore"] = 1 - normalize(raw_blurriness, 0, 2000)
             if "contrast" in requested_features:
-                results["contrastScore"] = float(np.mean(contrast_scores))
+                raw_contrast = float(np.mean(contrast_scores))
+                results["contrastScore"] = normalize(raw_contrast, 20, 70)
             if "brightness" in requested_features:
                 results["brightnessScore"] = float(np.mean(brightness_scores))
             if "burnt_pixels" in requested_features or "burnt_pixel" in requested_features:
@@ -221,4 +228,3 @@ def predict():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
-
