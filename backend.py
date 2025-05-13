@@ -189,7 +189,7 @@ def predict():
     try:
         if "shakinessscore" in requested_features:
             score = psiv(temp_video_path)
-            results["shakinessScore"] = float(score)
+            results["shakinessScore"] = round(float(score),3)
         if any(f in requested_features for f in ["tiltscore", "blurrinessscore", "contrast", "brightness", "burnt_pixel", "burnt_pixels"]):
             cap = cv2.VideoCapture(temp_video_path)
             tilt_scores, blurr_scores, contrast_scores, brightness_scores, burnt_scores = [], [], [], [], []
@@ -206,17 +206,17 @@ def predict():
             cap.release()
 
             if "tiltscore" in requested_features:
-                results["tiltScore"] = float(np.mean(tilt_scores))
+                results["tiltScore"] = round(float(np.mean(tilt_scores)),3)
             if "blurrinessscore" in requested_features:
                 raw_blurriness = float(np.mean(blurr_scores))
-                results["blurrinessScore"] = 1 - normalize(raw_blurriness, 0, 2000)
+                results["blurrinessScore"] = round(1 - normalize(raw_blurriness, 0, 2000),3)
             if "contrast" in requested_features:
                 raw_contrast = float(np.mean(contrast_scores))
-                results["contrastScore"] = normalize(raw_contrast, 20, 70)
+                results["contrastScore"] = round(normalize(raw_contrast, 20, 70),3)
             if "brightness" in requested_features:
-                results["brightnessScore"] = float(np.mean(brightness_scores))
+                results["brightnessScore"] = round(float(np.mean(brightness_scores)),3)
             if "burnt_pixels" in requested_features or "burnt_pixel" in requested_features:
-                results["burntPixelScore"] = float(np.mean(burnt_scores))
+                results["burntPixelScore"] = round(float(np.mean(burnt_scores)),3)
 
     except Exception as e:
         return jsonify({"error": f"Processing failed: {str(e)}"}), 500
